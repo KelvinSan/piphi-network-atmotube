@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -59,6 +60,7 @@ func (a *App) Router() *gin.Engine {
 	router.GET("/discover", a.handleDiscover)
 	router.POST("/discover", a.handleDiscover)
 	router.POST("/config", a.handleConfig)
+	router.POST("/configs/sync", a.handleConfigSync)
 	router.POST("/config/sync", a.handleConfigSync)
 	router.POST("/deconfigure", a.handleDeconfigure)
 	router.GET("/state", a.handleState)
@@ -170,7 +172,18 @@ func (a *App) handleDiscover(c *gin.Context) {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, runtimekit.BuildDiscoveryResponse(devices))
+	filtered := make([]atmotube.DiscoveredDevice, 0, len(devices))
+	for _, device := range devices {
+		if isAtmotubeDiscoveryMatch(device) {
+			filtered = append(filtered, device)
+		}
+	}
+	c.JSON(http.StatusOK, runtimekit.BuildDiscoveryResponse(filtered))
+}
+
+func isAtmotubeDiscoveryMatch(device atmotube.DiscoveredDevice) bool {
+	name := strings.ToUpper(strings.TrimSpace(device.Name))
+	return strings.Contains(name, "ATMOTUBE") || device.HasAtmotubeService
 }
 
 func (a *App) handleConfig(c *gin.Context) {
@@ -181,6 +194,7 @@ func (a *App) handleConfig(c *gin.Context) {
 	}
 
 	payload = payload.Normalize()
+	payload.IntegrationID = firstNonEmpty(payload.IntegrationID, integrationID)
 	a.syncRuntimeAuth(c, payload.ContainerID)
 	log.Println(runtimekit.FormatConfigApplyLog(map[string]any{
 		"id":             payload.ID,
@@ -192,6 +206,14 @@ func (a *App) handleConfig(c *gin.Context) {
 
 	entry, err := a.applyConfig(payload)
 	if err != nil {
+		log.Printf(
+			"config_apply_failed config_id=%s container_id=%s integration_id=%s address=%s error=%v",
+			payload.ID,
+			payload.ContainerID,
+			payload.IntegrationID,
+			payload.Address,
+			err,
+		)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -234,6 +256,13 @@ func (a *App) handleConfigSync(c *gin.Context) {
 		},
 	)
 	if err != nil {
+		log.Printf(
+			"config_sync_failed container_id=%s generation=%d config_count=%d error=%v",
+			payload.ContainerID,
+			payload.Generation,
+			len(payload.Configs),
+			err,
+		)
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
@@ -391,41 +420,78 @@ func (a *App) pollOnce(entry atmotube.DeviceEntry) {
 	a.registry.Set(entry.ConfigID, entry)
 	a.registry.UpdateState(entry.ConfigID, reading)
 
-	runtimekit.ScheduleTelemetryDelivery(
-		a.runtime.ProcessState,
-		a.telemetry,
-		a.runtime.Auth,
-		runtimekit.TelemetryPayload{
-			DeviceID:      entry.DeviceID,
-			ContainerID:   entry.ContainerID,
-			IntegrationID: entry.IntegrationID,
-			Metrics: map[string]any{
-				"voc_ppb":          reading.VOCPPB,
-				"voc_ppm":          reading.VOCPPM,
-				"humidity_percent": reading.HumidityPercent,
-				"temperature_c":    reading.TemperatureC,
-				"pressure_mbar":    reading.PressureMbar,
-				"battery_percent":  reading.BatteryPercent,
-				"pm1_ugm3":         reading.PM1UGM3,
-				"pm25_ugm3":        reading.PM25UGM3,
-				"pm4_ugm3":         reading.PM4UGM3,
-				"pm10_ugm3":        reading.PM10UGM3,
-			},
-			Units: map[string]any{
-				"voc_ppb":          "ppb",
-				"voc_ppm":          "ppm",
-				"humidity_percent": "%",
-				"temperature_c":    "C",
-				"pressure_mbar":    "mbar",
-				"battery_percent":  "%",
-				"pm1_ugm3":         "ug/m3",
-				"pm25_ugm3":        "ug/m3",
-				"pm4_ugm3":         "ug/m3",
-				"pm10_ugm3":        "ug/m3",
-			},
-			Timestamp: reading.SampledAt,
+	a.queueTelemetry(entry, reading)
+}
+
+func (a *App) queueTelemetry(entry atmotube.DeviceEntry, reading atmotube.Reading) {
+	payload := runtimekit.TelemetryPayload{
+		DeviceID:      entry.DeviceID,
+		ContainerID:   entry.ContainerID,
+		IntegrationID: entry.IntegrationID,
+		Metrics: map[string]any{
+			"voc_ppb":          reading.VOCPPB,
+			"voc_ppm":          reading.VOCPPM,
+			"humidity_percent": reading.HumidityPercent,
+			"temperature_c":    reading.TemperatureC,
+			"pressure_mbar":    reading.PressureMbar,
+			"battery_percent":  reading.BatteryPercent,
+			"pm1_ugm3":         reading.PM1UGM3,
+			"pm25_ugm3":        reading.PM25UGM3,
+			"pm4_ugm3":         reading.PM4UGM3,
+			"pm10_ugm3":        reading.PM10UGM3,
 		},
+		Units: map[string]any{
+			"voc_ppb":          "ppb",
+			"voc_ppm":          "ppm",
+			"humidity_percent": "%",
+			"temperature_c":    "C",
+			"pressure_mbar":    "mbar",
+			"battery_percent":  "%",
+			"pm1_ugm3":         "ug/m3",
+			"pm25_ugm3":        "ug/m3",
+			"pm4_ugm3":         "ug/m3",
+			"pm10_ugm3":        "ug/m3",
+		},
+		Timestamp: reading.SampledAt,
+	}
+
+	log.Printf(
+		"telemetry_queue config_id=%s device_id=%s container_id=%s integration_id=%s metric_count=%d sampled_at=%s",
+		entry.ConfigID,
+		entry.DeviceID,
+		entry.ContainerID,
+		entry.IntegrationID,
+		len(payload.Metrics),
+		payload.Timestamp,
 	)
+
+	runtimekit.CreateTrackedTask(a.runtime.ProcessState, func() {
+		if err := a.telemetry.SendMetrics(a.runtime.Auth, payload); err != nil {
+			log.Printf(
+				"telemetry_delivery_failed config_id=%s device_id=%s container_id=%s integration_id=%s metric_count=%d error=%v",
+				entry.ConfigID,
+				entry.DeviceID,
+				entry.ContainerID,
+				entry.IntegrationID,
+				len(payload.Metrics),
+				err,
+			)
+			a.appendLocalEvent("atmotube.telemetry.error", entry, map[string]any{
+				"error":        err.Error(),
+				"metric_count": len(payload.Metrics),
+			})
+			return
+		}
+
+		log.Printf(
+			"telemetry_delivery_succeeded config_id=%s device_id=%s container_id=%s integration_id=%s metric_count=%d",
+			entry.ConfigID,
+			entry.DeviceID,
+			entry.ContainerID,
+			entry.IntegrationID,
+			len(payload.Metrics),
+		)
+	})
 }
 
 func (a *App) appendLocalEvent(eventType string, entry atmotube.DeviceEntry, payload map[string]any) {
