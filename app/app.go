@@ -317,13 +317,23 @@ func (a *App) handleEntities(c *gin.Context) {
 		}
 		entities = append(entities, map[string]any{
 			"id":           entry.DeviceID,
+			"name":         firstNonEmpty(entry.Alias, entry.DeviceID),
 			"config_id":    entry.ConfigID,
+			"device_id":    entry.DeviceID,
+			"device_class": "air-quality-sensor",
+			"entity_type":  "sensor",
+			"capabilities": []string{"voc_ppb", "temperature_c", "humidity_percent", "pressure_mbar", "battery_percent", "pm25_ugm3", "telemetry"},
+			"dashboard": map[string]any{
+				"allowed_widgets":     []string{"stat", "line-chart", "gauge"},
+				"default_widget":      "stat",
+				"recommended_widgets": []string{"stat", "gauge"},
+			},
 			"address":      entry.Address,
 			"alias":        entry.Alias,
 			"latest_state": entry.LatestState,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"entities": entities})
+	c.JSON(http.StatusOK, runtimekit.BuildEntitiesResponse(entities, nil, nil))
 }
 
 func (a *App) syncRuntimeAuth(c *gin.Context, payloadContainerID string) {

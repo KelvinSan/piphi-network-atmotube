@@ -5,9 +5,10 @@ PiPhi runtime integration for the Atmotube Pro using Go, Gin, the local
 
 ## What it does
 
-- scans nearby BLE devices and filters for the Atmotube Pro service
+- scans nearby BLE devices and filters discovery down to Atmotube candidates
 - discovers Atmotube Pro devices over Bluetooth Low Energy
 - connects to a configured Atmotube Pro by Bluetooth MAC address
+- performs a short pre-connect scan before opening the BLE session so BlueZ has a current device object to connect to
 - reads the Atmotube GATT characteristics for:
   - VOC
   - humidity / temperature / pressure
@@ -15,6 +16,7 @@ PiPhi runtime integration for the Atmotube Pro using Go, Gin, the local
   - PM1 / PM2.5 / PM4 / PM10
 - keeps the latest state in the runtime registry
 - queues telemetry back to PiPhi Core through the Go runtime kit
+- logs BLE connect/discovery/read progress and telemetry delivery outcomes for easier troubleshooting
 
 ## Runtime routes
 
@@ -25,6 +27,7 @@ PiPhi runtime integration for the Atmotube Pro using Go, Gin, the local
 - `POST /discover`
 - `POST /config`
 - `POST /config/sync`
+- `POST /configs/sync`
 - `POST /deconfigure`
 - `GET /state`
 - `GET /events`
@@ -61,6 +64,35 @@ go mod tidy
 gofmt -w .
 go test ./...
 ```
+
+The runtime listens on `http://127.0.0.1:2026`.
+
+## Logging and troubleshooting
+
+Recent runtime updates added more explicit operational logging so it is easier to
+see where a BLE session fails or succeeds.
+
+Important log families include:
+
+- `runtime_internal_auth`
+- `bluetooth_preconnect_scan_*`
+- `bluetooth_connect_*`
+- `bluetooth_service_discovery_*`
+- `bluetooth_characteristic_discovery_*`
+- `bluetooth_snapshot_read_*`
+- `bluetooth_disconnect_*`
+- `telemetry_queue`
+- `telemetry_delivery_succeeded`
+- `telemetry_delivery_failed`
+
+That logging is especially useful when the host BLE stack is healthy but the
+runtime still needs a discovery pass before a connection can succeed.
+
+## Notes
+
+- The integration accepts both `/config/sync` and `/configs/sync` for snapshot rehydrate compatibility.
+- Discovery now intentionally filters out unrelated BLE devices.
+- Example IDs, MAC addresses, and tokens in tests or logs should be treated as placeholders.
 
 ## Device contract references
 

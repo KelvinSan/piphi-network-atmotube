@@ -15,6 +15,7 @@ type Client struct {
 	adapter    *bluetooth.Adapter
 	enableOnce sync.Once
 	enableErr  error
+	adapterMu  sync.Mutex
 }
 
 const preConnectScanTimeout = 4 * time.Second
@@ -33,6 +34,17 @@ func (c *Client) Enable() error {
 }
 
 func (c *Client) Scan(ctx context.Context, timeout time.Duration, addressFilter string) ([]DiscoveredDevice, error) {
+	var (
+		devices []DiscoveredDevice
+		err     error
+	)
+	c.withAdapterLock(func() {
+		devices, err = c.scanUnlocked(ctx, timeout, addressFilter)
+	})
+	return devices, err
+}
+
+func (c *Client) scanUnlocked(ctx context.Context, timeout time.Duration, addressFilter string) ([]DiscoveredDevice, error) {
 	if err := c.Enable(); err != nil {
 		return nil, err
 	}
@@ -101,14 +113,29 @@ func (c *Client) Scan(ctx context.Context, timeout time.Duration, addressFilter 
 }
 
 func (c *Client) ReadSnapshot(address string) (Reading, error) {
+	var (
+		reading Reading
+		err     error
+	)
+	c.withAdapterLock(func() {
+		reading, err = c.readSnapshotLocked(address)
+	})
+	return reading, err
+}
+
+func (c *Client) readSnapshotLocked(address string) (Reading, error) {
 	if err := c.Enable(); err != nil {
 		return Reading{}, err
 	}
 
 	normalizedAddress := strings.ToUpper(strings.TrimSpace(address))
-	if err := c.ensureDeviceVisible(normalizedAddress); err != nil {
-		log.Printf("bluetooth_preconnect_scan_failed address=%s error=%v", normalizedAddress, err)
-		return Reading{}, err
+	if err := c.ensureDeviceVisibleLocked(normalizedAddress); err != nil {
+		if isScanAlreadyInProgressError(err) {
+			log.Printf("bluetooth_preconnect_scan_skipped address=%s reason=%v", normalizedAddress, err)
+		} else {
+			log.Printf("bluetooth_preconnect_scan_failed address=%s error=%v", normalizedAddress, err)
+			return Reading{}, err
+		}
 	}
 	log.Printf("bluetooth_connect_attempt address=%s", normalizedAddress)
 
@@ -228,12 +255,12 @@ func (c *Client) ReadSnapshot(address string) (Reading, error) {
 	return reading, nil
 }
 
-func (c *Client) ensureDeviceVisible(address string) error {
+func (c *Client) ensureDeviceVisibleLocked(address string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), preConnectScanTimeout)
 	defer cancel()
 
 	log.Printf("bluetooth_preconnect_scan_started address=%s timeout=%s", address, preConnectScanTimeout)
-	devices, err := c.Scan(ctx, preConnectScanTimeout, address)
+	devices, err := c.scanUnlocked(ctx, preConnectScanTimeout, address)
 	if err != nil {
 		return fmt.Errorf("pre-connect scan %s: %w", address, err)
 	}
@@ -242,6 +269,20 @@ func (c *Client) ensureDeviceVisible(address string) error {
 	}
 	log.Printf("bluetooth_preconnect_scan_succeeded address=%s matches=%d", address, len(devices))
 	return nil
+}
+
+func (c *Client) withAdapterLock(fn func()) {
+	c.adapterMu.Lock()
+	defer c.adapterMu.Unlock()
+	fn()
+}
+
+func isScanAlreadyInProgressError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "already in progress")
 }
 
 func firstNonEmpty(values ...string) string {
