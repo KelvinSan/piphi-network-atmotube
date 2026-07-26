@@ -436,6 +436,7 @@ func (a *App) pollOnce(entry atmotube.DeviceEntry) {
 func (a *App) queueTelemetry(entry atmotube.DeviceEntry, reading atmotube.Reading) {
 	payload := runtimekit.TelemetryPayload{
 		DeviceID:      entry.DeviceID,
+		ConfigID:      entry.ConfigID,
 		ContainerID:   entry.ContainerID,
 		IntegrationID: entry.IntegrationID,
 		Metrics: map[string]any{
