@@ -53,6 +53,7 @@
       "discover": "/discover",
       "entities": "/entities",
       "state": "/state",
+      "command": "/command",
       "config": "/config",
       "config_sync": "/config/sync",
       "deconfigure": "/deconfigure",
@@ -150,6 +151,39 @@
         ],
         "default_widget": "stat"
       }
+    },
+    "refresh": {
+      "kind": "action",
+      "dashboard": {
+        "allowed_widgets": [
+          "button"
+        ],
+        "default_widget": "button"
+      }
     }
-  }
+  },
+  "commands": {
+    "refresh": {
+      "description": "Read and publish a fresh Atmotube sensor snapshot.",
+      "timeout_ms": 15000
+    }
+  },
+  "entities": [
+    {
+      "id": "atmotube_pro",
+      "name": "Atmotube Pro",
+      "device_class": "air_quality_sensor",
+      "entity_type": "sensor",
+      "capabilities": [
+        "voc_ppb",
+        "temperature_c",
+        "humidity_percent",
+        "pressure_mbar",
+        "battery_percent",
+        "pm25_ugm3",
+        "telemetry",
+        "refresh"
+      ]
+    }
+  ]
 }

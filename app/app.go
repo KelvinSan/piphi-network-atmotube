@@ -66,6 +66,7 @@ func (a *App) Router() *gin.Engine {
 	router.GET("/state", a.handleState)
 	router.GET("/events", a.handleEvents)
 	router.GET("/entities", a.handleEntities)
+	router.POST("/command", a.handleCommand)
 	return router
 }
 
@@ -334,6 +335,70 @@ func (a *App) handleEntities(c *gin.Context) {
 		})
 	}
 	c.JSON(http.StatusOK, runtimekit.BuildEntitiesResponse(entities, nil, nil))
+}
+
+type commandRequest struct {
+	Command  string         `json:"command"`
+	DeviceID string         `json:"device_id,omitempty"`
+	EntityID string         `json:"entity_id,omitempty"`
+	Args     map[string]any `json:"args,omitempty"`
+}
+
+func (a *App) handleCommand(c *gin.Context) {
+	var payload commandRequest
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if payload.Command != "refresh" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported command: " + payload.Command})
+		return
+	}
+
+	configID, _ := payload.Args["config_id"].(string)
+	configID = strings.TrimSpace(configID)
+	var entry atmotube.DeviceEntry
+	found := false
+	if configID != "" {
+		entry, found = a.registry.Get(configID)
+	}
+	if !found {
+		for _, candidateID := range a.registry.IDs() {
+			candidate, ok := a.registry.Get(candidateID)
+			if !ok {
+				continue
+			}
+			if candidate.DeviceID == payload.DeviceID || candidate.DeviceID == payload.EntityID {
+				entry, found = candidate, true
+				break
+			}
+		}
+	}
+	if !found {
+		c.JSON(http.StatusNotFound, gin.H{"error": "configured Atmotube device not found"})
+		return
+	}
+
+	a.syncRuntimeAuth(c, entry.ContainerID)
+	reading, err := a.ble.ReadSnapshot(entry.Address)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	entry.LatestState = reading
+	a.registry.Set(entry.ConfigID, entry)
+	a.registry.UpdateState(entry.ConfigID, reading)
+	a.queueTelemetry(entry, reading)
+	a.appendLocalEvent("atmotube.command.refresh", entry, map[string]any{
+		"sampled_at": reading.SampledAt,
+	})
+	c.JSON(http.StatusOK, gin.H{
+		"status":     "ok",
+		"config_id":  entry.ConfigID,
+		"device_id":  entry.DeviceID,
+		"sampled_at": reading.SampledAt,
+		"state":      reading,
+	})
 }
 
 func (a *App) syncRuntimeAuth(c *gin.Context, payloadContainerID string) {

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -216,5 +217,60 @@ func TestEntitiesLatestStateMirrorsReading(t *testing.T) {
 	latestState := response.Entities[0]["latest_state"].(map[string]any)
 	if latestState["temperature_c"].(float64) != 22.4 {
 		t.Fatalf("unexpected latest_state temperature: %#v", latestState["temperature_c"])
+	}
+}
+
+func TestRefreshCommandReadsAndReturnsFreshState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	fakeBLE := &fakeBLEClient{reading: sampleReading()}
+	app := NewWithOptions(fakeBLE, false)
+	router := app.Router()
+	config := atmotube.DeviceConfig{
+		RuntimeConfig: runtimekit.RuntimeConfig{ID: "bedroom", DeviceID: "bedroom"},
+		Address:       "11:22:33:AA:BB:CC",
+	}
+	if _, err := app.applyConfig(config); err != nil {
+		t.Fatalf("applyConfig failed: %v", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/command",
+		strings.NewReader(`{"command":"refresh","args":{"config_id":"bedroom"}}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if response["config_id"] != "bedroom" {
+		t.Fatalf("unexpected config_id: %#v", response["config_id"])
+	}
+	state := response["state"].(map[string]any)
+	if state["temperature_c"].(float64) != 22.4 {
+		t.Fatalf("unexpected refreshed state: %#v", state)
+	}
+}
+
+func TestRefreshCommandRejectsUnknownDevice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := NewWithOptions(&fakeBLEClient{}, false).Router()
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/command",
+		strings.NewReader(`{"command":"refresh","device_id":"missing"}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d: %s", recorder.Code, recorder.Body.String())
 	}
 }
