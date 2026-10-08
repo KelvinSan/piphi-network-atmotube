@@ -21,6 +21,7 @@ const integrationID = "piphi-network-atmotube-pro"
 type App struct {
 	runtime       *runtimekit.RuntimeContext
 	registry      *runtimekit.RuntimeRegistry[atmotube.DeviceEntry, atmotube.Reading, map[string]any]
+	state         *runtimekit.RuntimeStateService[atmotube.DeviceEntry, atmotube.Reading, map[string]any]
 	telemetry     *runtimekit.TelemetryClient
 	coordinator   *runtimekit.ConfigSyncCoordinator[atmotube.DeviceConfig]
 	ble           BLEClient
@@ -41,15 +42,21 @@ func New() *App {
 
 func NewWithOptions(ble BLEClient, enablePolling bool) *App {
 	runtime := runtimekit.NewRuntimeContext()
-	return &App{
+	registry := runtimekit.NewRuntimeRegistry[atmotube.DeviceEntry, atmotube.Reading, map[string]any](100)
+	application := &App{
 		runtime:       runtime,
-		registry:      runtimekit.NewRuntimeRegistry[atmotube.DeviceEntry, atmotube.Reading, map[string]any](100),
+		registry:      registry,
+		state:         runtimekit.NewRuntimeStateService(registry),
 		telemetry:     runtimekit.NewTelemetryClient(runtime.ProcessState, "", 0),
 		coordinator:   runtimekit.NewConfigSyncCoordinator[atmotube.DeviceConfig](runtime.ProcessState),
 		ble:           ble,
 		enablePolling: enablePolling,
 		pollers:       map[string]context.CancelFunc{},
 	}
+	if err := application.state.Provide(application.refreshAllState, integrationID); err != nil {
+		panic(err)
+	}
+	return application
 }
 
 func (a *App) Router() *gin.Engine {
@@ -289,10 +296,41 @@ func (a *App) handleDeconfigure(c *gin.Context) {
 }
 
 func (a *App) handleState(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"entries":         a.registry.EntriesSnapshot(),
+	response, err := a.state.Response(
+		c.Request.Context(),
+		c.Query("refresh") == "true",
+		c.Query("refresh_request_id"),
+	)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": err.Error()})
+		return
+	}
+	payload := gin.H{
+		"entries":         response.Entries,
 		"state_snapshots": a.registry.StateSnapshots(),
-	})
+	}
+	if response.Refresh != nil {
+		payload["refresh"] = response.Refresh
+	}
+	c.JSON(http.StatusOK, payload)
+}
+
+func (a *App) refreshAllState(_ context.Context) error {
+	for _, configID := range a.registry.IDs() {
+		entry, ok := a.registry.Get(configID)
+		if !ok {
+			continue
+		}
+		reading, err := a.ble.ReadSnapshot(entry.Address)
+		if err != nil {
+			return err
+		}
+		entry.LatestState = reading
+		a.registry.Set(entry.ConfigID, entry)
+		a.state.Publish(entry.ConfigID, reading, entry.DeviceID)
+		a.queueTelemetry(entry, reading)
+	}
+	return nil
 }
 
 func (a *App) handleEvents(c *gin.Context) {

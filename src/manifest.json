@@ -2,7 +2,7 @@
   "manifest_version": "1.0",
   "id": "atmotube-pro-ble",
   "name": "Atmotube Pro (BLE)",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Integration for the Atmotube Pro over Bluetooth Low Energy using tinygo.org/x/bluetooth.",
   "maintainer": {
     "name": "PiPhi Network",
@@ -185,5 +185,14 @@
         "refresh"
       ]
     }
-  ]
+  ],
+  "ui": {
+    "experience_packages": [
+      {
+        "registry_id": "io.piphi.atmotube-air-quality",
+        "version_range": ">=0.1,<1",
+        "auto_install": true
+      }
+    ]
+  }
 }
