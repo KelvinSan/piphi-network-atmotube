@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	runtimekit "github.com/piphi-network/piphi-runtime-kit-go"
+	runtimekit "github.com/PiPhi-io/piphi-runtime-kit-go"
 
 	"github.com/KelvinSan/piphi-network-atmotube/atmotube"
 )
