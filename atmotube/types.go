@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	runtimekit "github.com/piphi-network/piphi-runtime-kit-go"
+	runtimekit "github.com/PiPhi-io/piphi-runtime-kit-go"
 )
 
 const (

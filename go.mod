@@ -3,8 +3,8 @@ module github.com/KelvinSan/piphi-network-atmotube
 go 1.25.0
 
 require (
+	github.com/PiPhi-io/piphi-runtime-kit-go v0.1.1
 	github.com/gin-gonic/gin v1.12.0
-	github.com/piphi-network/piphi-runtime-kit-go v0.0.0
 	tinygo.org/x/bluetooth v0.14.0
 )
 
@@ -48,5 +48,3 @@ require (
 	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
-
-replace github.com/piphi-network/piphi-runtime-kit-go => ../piphi-runtime-kit-go
