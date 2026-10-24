@@ -194,5 +194,8 @@
         "auto_install": true
       }
     ]
+  },
+  "onboarding": {
+    "mode": "discovery"
   }
 }
